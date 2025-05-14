@@ -2,6 +2,8 @@ package com.example.laniptv.player
 
 import android.content.Context
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import com.example.laniptv.data.model.Channel
 import com.example.laniptv.data.model.PlayerState
@@ -24,35 +26,49 @@ class VlcPlayerManager(
     private val TAG = "VlcPlayerManager"
 
     /**
-     * Inicializa la librería VLC con configuración básica
+     * Inicializa la librería VLC con configuración optimizada
      */
     fun initialize() {
         if (libVlc == null) {
             try {
-                // Configuración básica para VLC que debería funcionar en la mayoría de dispositivos
+                // Configuración mejorada para mayor estabilidad en reproducciones IPTV
                 val options = ArrayList<String>().apply {
-                    // Opciones esenciales para la reproducción
-                    add("--no-drop-late-frames")
-                    add("--no-skip-frames")
-                    add("--rtsp-tcp")
-                    add("--network-caching=1500")
-                    add("--http-reconnect")
+                    // Opciones de buffering mejoradas
+                    add("--network-caching=3000")       // Incrementado para mejor estabilidad
+                    add("--file-caching=1500")
+                    add("--live-caching=2000")
 
-                    // Deshabilitar funciones innecesarias para reducir problemas
+                    // Opciones críticas para streaming
+                    add("--sout-mux-caching=2000")
+                    add("--http-reconnect")
+                    add("--adaptive-maxbuffer=30000")   // Búfer más grande para adaptación
+
+                    // Opciones para mejorar la continuidad del stream
+                    add("--clock-jitter=0")
+                    add("--clock-synchro=0")
+                    add("--no-drop-late-frames")        // No descartar frames tardíos
+                    add("--no-skip-frames")             // No saltarse frames
+
+                    // Opciones para manejo de UDP y RTP
+                    add("--udp-timeout=5000")
+                    add("--rtsp-tcp")                   // Preferir TCP para RTSP
+
+                    // Opciones para audio
+                    add("--aout=opensles")
+                    add("--audio-time-stretch")         // Permite estirar audio para sincronización
+                    add("--avcodec-fast")               // Decodificación más rápida
+
+                    // Deshabilitar funciones innecesarias
                     add("--no-sub-autodetect-file")
                     add("--no-snapshot-preview")
                     add("--no-stats")
-
-                    // Modo de audio seguro
-                    add("--aout=opensles")
-                    add("--audio-time-stretch")
                 }
 
-                Log.d(TAG, "Inicializando LibVLC con opciones básicas")
+                Log.d(TAG, "Inicializando LibVLC con opciones mejoradas")
                 libVlc = LibVLC(context, options)
                 mediaPlayer = MediaPlayer(libVlc)
 
-                // Configurar eventos del reproductor
+                // Configurar eventos del reproductor con mejor manejo de errores
                 configureMediaPlayerEvents()
 
                 Log.d(TAG, "LibVLC inicializado correctamente")
@@ -101,7 +117,7 @@ class VlcPlayerManager(
     }
 
     /**
-     * Reproduce un canal
+     * Reproduce un canal con configuración optimizada
      */
     fun playChannel(channel: Channel) {
         if (mediaPlayer == null) {
@@ -120,11 +136,23 @@ class VlcPlayerManager(
             val uri = Uri.parse(channel.streamUrl)
             val media = Media(libVlc, uri)
 
-            // Opciones básicas para el stream
-            media.addOption(":network-caching=1500")
+            // Configurar opciones según el tipo de stream
+            val isUdp = channel.streamUrl.startsWith("udp") || channel.streamUrl.startsWith("rtp")
+            val isHttp = channel.streamUrl.startsWith("http")
 
-            if (channel.streamUrl.startsWith("http")) {
+            // Opciones comunes
+            media.addOption(":network-caching=3000")
+
+            if (isUdp) {
+                // Optimizaciones para streams UDP/RTP
+                media.addOption(":udp-timeout=5000")
+                media.addOption(":udp-caching=3000")
+                media.addOption(":clock-jitter=0")
+            } else if (isHttp) {
+                // Optimizaciones para streams HTTP
                 media.addOption(":http-reconnect")
+                media.addOption(":http-continuous")
+                media.addOption(":adaptive-maxbuffer=30000")
             }
 
             // Establecer el nuevo medio y reproducir
@@ -140,7 +168,7 @@ class VlcPlayerManager(
     }
 
     /**
-     * Configura listeners para eventos del reproductor
+     * Configura listeners para eventos del reproductor con manejo mejorado
      */
     private fun configureMediaPlayerEvents() {
         mediaPlayer?.setEventListener { event ->
@@ -155,25 +183,53 @@ class VlcPlayerManager(
                 }
                 MediaPlayer.Event.EndReached -> {
                     Log.d(TAG, "Evento: Fin alcanzado")
-                    // En caso de fin de stream, intentar reproducir de nuevo
+                    // Implementación mejorada de reintento con delay
                     currentChannel?.let {
-                        Log.d(TAG, "Reintentando reproducción")
-                        playChannel(it)
+                        Log.d(TAG, "Reintentando reproducción con delay")
+                        // Pequeña pausa antes de reintentar para evitar bucle de reintentos rápidos
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            playChannel(it)
+                        }, 1500) // 1.5 segundos de pausa
                     }
                 }
                 MediaPlayer.Event.EncounteredError -> {
                     Log.e(TAG, "Evento: Error en reproducción")
-                    onPlayerStateChanged(PlayerState.Error("Error en la reproducción"))
+                    // Implementación mejorada de manejo de errores
+                    val errorMessage = "Error en la reproducción"
+                    onPlayerStateChanged(PlayerState.Error(errorMessage))
+
+                    // Reintentar después de un error con delay progresivo
+                    currentChannel?.let { channel ->
+                        // Reintentar con un delay mayor
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            playChannel(channel)
+                        }, 3000) // 3 segundos
+                    }
                 }
                 MediaPlayer.Event.Buffering -> {
-                    Log.d(TAG, "Evento: Buffering ${event.buffering}%")
-                    if (event.buffering >= 100 && mediaPlayer?.isPlaying == false) {
-                        mediaPlayer?.play()
+                    val buffering = event.buffering
+                    Log.d(TAG, "Evento: Buffering ${buffering}%")
+
+                    if (buffering >= 100) {
+                        if (mediaPlayer?.isPlaying == false) {
+                            mediaPlayer?.play()
+                        }
+                    } else if (buffering > 10) {
+                        // Informar al usuario sobre el estado del buffering
+                        onPlayerStateChanged(PlayerState.Loading)
                     }
+                }
+                MediaPlayer.Event.TimeChanged, MediaPlayer.Event.PositionChanged -> {
+                    // Evento silencioso, no loggear para evitar spam
+                }
+                else -> {
+                    // Loggear otros eventos
+                    Log.d(TAG, "Evento VLC: ${event.type}")
                 }
             }
         }
     }
+
     /**
      * Pausa la reproducción
      */
