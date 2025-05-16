@@ -3,6 +3,7 @@ package com.example.laniptv.ui.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.laniptv.LanIPTVApplication
 import com.example.laniptv.data.model.Category
 import com.example.laniptv.data.model.Channel
 import com.example.laniptv.data.model.PlayerState
@@ -48,12 +49,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isFullscreen = MutableStateFlow(false)
     val isFullscreen: StateFlow<Boolean> = _isFullscreen.asStateFlow()
 
+    // Estado del modo de desarrollo
+    private val _isDevelopmentMode = MutableStateFlow(false)
+    val isDevelopmentMode: StateFlow<Boolean> = _isDevelopmentMode.asStateFlow()
+
     init {
         // Iniciar servicio de reproducción
         serviceConnection = PlaylistServiceConnection(application) { state ->
             _playerState.value = state
         }
         serviceConnection?.bindService()
+
+        // Verificar modo de desarrollo
+        viewModelScope.launch {
+            val appConfig = (application as LanIPTVApplication).appConfig
+            appConfig.isDevelopmentMode.collect { isDevMode ->
+                _isDevelopmentMode.value = isDevMode
+            }
+        }
 
         // Cargar lista de reproducción (puedes personalizar la URL)
         loadPlaylist("https://opop.pro/XLE8sWYgsUXvNp")
@@ -100,7 +113,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val wasFullscreen = _isFullscreen.value
 
             _selectedChannel.value = channel
-            serviceConnection?.playChannel(channel)
+
+            // Solo intentar reproducir si no estamos en modo de desarrollo
+            if (!_isDevelopmentMode.value) {
+                serviceConnection?.playChannel(channel)
+            } else {
+                // En modo desarrollo, simplemente cambiamos el estado
+                _playerState.value = PlayerState.Playing
+            }
 
             // Solo reiniciar el fullscreen si no estamos en navegación
             // (cuando se selecciona desde la lista de canales)
@@ -127,8 +147,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (currentIndex != -1) {
             val nextIndex = (currentIndex + 1) % channelsToUse.size
             // Mantener el valor de fullscreen actual
-            _selectedChannel.value = channelsToUse[nextIndex]
-            serviceConnection?.playChannel(channelsToUse[nextIndex])
+            selectChannel(channelsToUse[nextIndex])
             // No reiniciar el modo fullscreen
         }
     }
@@ -150,8 +169,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (currentIndex != -1) {
             val prevIndex = if (currentIndex > 0) currentIndex - 1 else channelsToUse.size - 1
             // Mantener el valor de fullscreen actual
-            _selectedChannel.value = channelsToUse[prevIndex]
-            serviceConnection?.playChannel(channelsToUse[prevIndex])
+            selectChannel(channelsToUse[prevIndex])
             // No reiniciar el modo fullscreen
         }
     }

@@ -23,6 +23,7 @@ class AppConfig(private val context: Context) {
         val EPG_URL_KEY = stringPreferencesKey("epg_url")
         val LAST_CHANNEL_ID_KEY = stringPreferencesKey("last_channel_id")
         val LAST_CATEGORY_NAME_KEY = stringPreferencesKey("last_category_name")
+        val DEVELOPMENT_MODE_KEY = stringPreferencesKey("development_mode")
 
         // Valores por defecto
         const val DEFAULT_PLAYLIST_URL = "https://opop.pro/XLE8sWYgsUXvNp"
@@ -94,6 +95,23 @@ class AppConfig(private val context: Context) {
     suspend fun saveLastCategoryName(categoryName: String) {
         context.dataStore.edit { preferences ->
             preferences[LAST_CATEGORY_NAME_KEY] = categoryName
+        }
+    }
+
+    /**
+     * Obtiene el estado del modo de desarrollo
+     */
+    val isDevelopmentMode: Flow<Boolean> = context.dataStore.data
+        .map { preferences ->
+            preferences[DEVELOPMENT_MODE_KEY]?.toBoolean() ?: false
+        }
+
+    /**
+     * Guarda el estado del modo de desarrollo
+     */
+    suspend fun saveDevelopmentMode(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[DEVELOPMENT_MODE_KEY] = enabled.toString()
         }
     }
 }

@@ -26,9 +26,15 @@ fun SettingsScreen(
     var playlistUrl by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(true) }
 
+    // Estado para el modo de desarrollo
+    var developmentMode by remember { mutableStateOf(false) }
+
     // Cargar la URL actual
     LaunchedEffect(Unit) {
         playlistUrl = appConfig.playlistUrl.firstOrNull() ?: AppConfig.DEFAULT_PLAYLIST_URL
+        appConfig.isDevelopmentMode.firstOrNull()?.let {
+            developmentMode = it
+        }
         isLoading = false
     }
 
@@ -88,6 +94,44 @@ fun SettingsScreen(
             ) {
                 Text("Guardar cambios")
             }
+
+            Divider(modifier = Modifier.padding(vertical = 16.dp))
+
+            // Sección de modo de desarrollo
+            Text(
+                text = "Modo de desarrollo",
+                style = MaterialTheme.typography.titleLarge
+            )
+
+            // Switch para activar/desactivar el modo de desarrollo
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "Activar modo de desarrollo",
+                    style = MaterialTheme.typography.bodyLarge
+                )
+
+                Switch(
+                    checked = developmentMode,
+                    onCheckedChange = { newValue ->
+                        developmentMode = newValue
+                        coroutineScope.launch {
+                            appConfig.saveDevelopmentMode(newValue)
+                        }
+                    }
+                )
+            }
+
+            Text(
+                text = "El modo de desarrollo muestra contenido de muestra en lugar de intentar reproducir streams reales. Útil para pruebas en emuladores.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
 
             Divider(modifier = Modifier.padding(vertical = 16.dp))
 

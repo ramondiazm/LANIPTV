@@ -44,6 +44,12 @@ import kotlinx.coroutines.launch
 import org.videolan.libvlc.util.VLCVideoLayout
 import java.text.SimpleDateFormat
 import java.util.Locale
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+
 
 @Composable
 fun MainScreen(
@@ -259,18 +265,54 @@ fun VlcPlayerComponent(
     viewModel: MainViewModel,
     modifier: Modifier = Modifier
 ) {
-    AndroidView(
-        modifier = modifier,
-        factory = { ctx ->
-            VLCVideoLayout(ctx).apply {
-                layoutParams = FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT
-                )
-                viewModel.attachVideoView(this)
+    val isDevelopmentMode by viewModel.isDevelopmentMode.collectAsState()
+
+    Box(modifier = modifier) {
+        // Componente de VLC real
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { ctx ->
+                VLCVideoLayout(ctx).apply {
+                    layoutParams = FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                    viewModel.attachVideoView(this)
+                }
+            }
+        )
+
+        // Modo desarrollo - mostrar overlay
+        if (isDevelopmentMode) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        text = "MODO DESARROLLO",
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = Color.White
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Text(
+                        text = "La reproducción de video está desactivada en el emulador.",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = Color.White,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 32.dp)
+                    )
+                }
             }
         }
-    )
+    }
 }
 
 @Composable
