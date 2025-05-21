@@ -30,12 +30,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.laniptv.data.model.Channel
 import com.example.laniptv.data.model.EpgChannel
 import com.example.laniptv.data.model.EpgProgram
 import com.example.laniptv.data.model.EpgState
+import com.example.laniptv.ui.components.ErrorScreen
 import com.example.laniptv.ui.components.LoadingScreenView
 import com.example.laniptv.ui.viewmodel.EpgViewModel
 import com.example.laniptv.ui.viewmodel.MainViewModel
@@ -111,7 +113,7 @@ fun EpgScreen(
 
             is EpgState.Error -> {
                 val errorMessage = (epgState as EpgState.Error).message
-                ErrorScreen(errorMessage) {
+                ErrorScreen(errorMessage = errorMessage) {
                     epgViewModel.loadEpg(true)
                 }
             }

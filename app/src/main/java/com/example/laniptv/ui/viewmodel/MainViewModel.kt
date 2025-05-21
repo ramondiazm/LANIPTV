@@ -1,9 +1,11 @@
 package com.example.laniptv.ui.viewmodel
 
 import android.app.Application
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.laniptv.LanIPTVApplication
 import com.example.laniptv.data.model.Category
 import com.example.laniptv.data.model.Channel
 import com.example.laniptv.data.model.PlayerState
@@ -15,6 +17,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import org.videolan.libvlc.util.VLCVideoLayout
+
+private const val TAG = "MainViewModel"
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -49,26 +53,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isFullscreen = MutableStateFlow(false)
     val isFullscreen: StateFlow<Boolean> = _isFullscreen.asStateFlow()
 
-    // Estado del modo de desarrollo
-    private val _isDevelopmentMode = MutableStateFlow(false)
-    val isDevelopmentMode: StateFlow<Boolean> = _isDevelopmentMode.asStateFlow()
+    // Control para reintentos de reproducción
+    private var retryCount = 0
+    private val MAX_RETRIES = 3
+    private var retryHandler = Handler(Looper.getMainLooper())
+    private var retryRunnable: Runnable? = null
 
     init {
+        Log.d(TAG, "Inicializando MainViewModel")
+
         // Iniciar servicio de reproducción
         serviceConnection = PlaylistServiceConnection(application) { state ->
             _playerState.value = state
+
+            // Manejar reintentos automáticos para errores
+            if (state is PlayerState.Error) {
+                Log.e(TAG, "Error en reproducción: ${state.message}")
+                retryPlayback()
+            }
         }
         serviceConnection?.bindService()
 
-        // Verificar modo de desarrollo
-        viewModelScope.launch {
-            val appConfig = (application as LanIPTVApplication).appConfig
-            appConfig.isDevelopmentMode.collect { isDevMode ->
-                _isDevelopmentMode.value = isDevMode
-            }
-        }
-
-        // Cargar lista de reproducción (puedes personalizar la URL)
+        // Cargar lista de reproducción
         loadPlaylist("https://opop.pro/XLE8sWYgsUXvNp")
     }
 
@@ -78,15 +84,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun loadPlaylist(url: String) {
         viewModelScope.launch {
             _playlistState.value = PlaylistUiState.Loading
+            Log.d(TAG, "Iniciando carga de lista de reproducción desde: $url")
 
             try {
                 val playlist = playlistRepository.getPlaylistFromUrl(url)
                 _playlistState.value = PlaylistUiState.Success(playlist)
+                Log.d(TAG, "Lista cargada con éxito: ${playlist.categories.size} categorías, ${playlist.allChannels.size} canales")
 
                 // Seleccionar la categoría "Todos" por defecto
                 _selectedCategory.value = playlist.categories.firstOrNull()
 
             } catch (e: Exception) {
+                Log.e(TAG, "Error al cargar lista: ${e.message}", e)
                 _playlistState.value = PlaylistUiState.Error(e.message ?: "Error desconocido")
             }
         }
@@ -98,6 +107,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun selectCategory(category: Category) {
         _selectedCategory.value = category
         _isSearchActive.value = false
+        Log.d(TAG, "Categoría seleccionada: ${category.name} con ${category.channels.size} canales")
     }
 
     /**
@@ -107,20 +117,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (_selectedChannel.value?.id == channel.id) {
             // Si es el mismo canal, cambiar modo fullscreen
             toggleFullscreen()
+            Log.d(TAG, "Cambiando modo fullscreen para canal actual: ${channel.name}")
         } else {
             // Mantener el valor de fullscreen actual si estamos cambiando de canal
             // desde el control de navegación
             val wasFullscreen = _isFullscreen.value
 
-            _selectedChannel.value = channel
+            // Cancelar cualquier reintento programado
+            cancelRetry()
+            retryCount = 0
 
-            // Solo intentar reproducir si no estamos en modo de desarrollo
-            if (!_isDevelopmentMode.value) {
-                serviceConnection?.playChannel(channel)
-            } else {
-                // En modo desarrollo, simplemente cambiamos el estado
-                _playerState.value = PlayerState.Playing
-            }
+            _selectedChannel.value = channel
+            _playerState.value = PlayerState.Loading
+            Log.d(TAG, "Seleccionando nuevo canal: ${channel.name} - URL: ${channel.streamUrl}")
+            serviceConnection?.playChannel(channel)
 
             // Solo reiniciar el fullscreen si no estamos en navegación
             // (cuando se selecciona desde la lista de canales)
@@ -147,7 +157,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (currentIndex != -1) {
             val nextIndex = (currentIndex + 1) % channelsToUse.size
             // Mantener el valor de fullscreen actual
-            selectChannel(channelsToUse[nextIndex])
+            Log.d(TAG, "Cambiando al siguiente canal: ${channelsToUse[nextIndex].name}")
+            _selectedChannel.value = channelsToUse[nextIndex]
+            serviceConnection?.playChannel(channelsToUse[nextIndex])
             // No reiniciar el modo fullscreen
         }
     }
@@ -169,7 +181,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (currentIndex != -1) {
             val prevIndex = if (currentIndex > 0) currentIndex - 1 else channelsToUse.size - 1
             // Mantener el valor de fullscreen actual
-            selectChannel(channelsToUse[prevIndex])
+            Log.d(TAG, "Cambiando al canal anterior: ${channelsToUse[prevIndex].name}")
+            _selectedChannel.value = channelsToUse[prevIndex]
+            serviceConnection?.playChannel(channelsToUse[prevIndex])
             // No reiniciar el modo fullscreen
         }
     }
@@ -179,6 +193,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun toggleFullscreen() {
         _isFullscreen.value = !_isFullscreen.value
+        Log.d(TAG, "Modo fullscreen: ${_isFullscreen.value}")
     }
 
     /**
@@ -187,10 +202,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun searchChannels(query: String) {
         if (query.isEmpty()) {
             _isSearchActive.value = false
+            Log.d(TAG, "Búsqueda desactivada")
             return
         }
 
         _isSearchActive.value = true
+        Log.d(TAG, "Iniciando búsqueda: '$query'")
 
         val state = _playlistState.value
         if (state is PlaylistUiState.Success) {
@@ -199,6 +216,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 it.name.contains(query, ignoreCase = true)
             }
             _filteredChannels.value = filtered
+            Log.d(TAG, "Resultado de búsqueda: ${filtered.size} canales encontrados")
         }
     }
 
@@ -206,11 +224,55 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * Conecta el layout de video al reproductor
      */
     fun attachVideoView(videoLayout: VLCVideoLayout) {
+        Log.d(TAG, "Adjuntando videoLayout al reproductor")
         serviceConnection?.attachVideoView(videoLayout)
+    }
+
+    /**
+     * Reintenta la reproducción después de un error
+     */
+    private fun retryPlayback() {
+        val channel = _selectedChannel.value ?: return
+
+        // Cancelar cualquier reintento anterior
+        cancelRetry()
+
+        if (retryCount < MAX_RETRIES) {
+            retryCount++
+            val delayMs = 1500L * retryCount  // Aumentar retraso con cada intento
+
+            Log.d(TAG, "Programando reintento #$retryCount para ${channel.name} en ${delayMs}ms")
+
+            retryRunnable = Runnable {
+                Log.d(TAG, "Ejecutando reintento #$retryCount")
+                // Cambiar estado a Loading para indicar que estamos reintentando
+                _playerState.value = PlayerState.Loading
+                serviceConnection?.playChannel(channel)
+            }
+
+            retryHandler.postDelayed(retryRunnable!!, delayMs)
+        } else {
+            Log.e(TAG, "Número máximo de reintentos alcanzado para ${channel.name}")
+            // Ya no intentamos más reintentos automáticos
+        }
+    }
+
+    /**
+     * Cancela cualquier reintento programado
+     */
+    private fun cancelRetry() {
+        retryRunnable?.let {
+            retryHandler.removeCallbacks(it)
+            retryRunnable = null
+            Log.d(TAG, "Reintento automático cancelado")
+        }
     }
 
     override fun onCleared() {
         super.onCleared()
+        Log.d(TAG, "onCleared - Liberando recursos del ViewModel")
+        cancelRetry()
         serviceConnection?.unbindService()
+        serviceConnection = null
     }
 }

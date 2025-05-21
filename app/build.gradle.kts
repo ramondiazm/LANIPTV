@@ -86,8 +86,8 @@ dependencies {
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
-    // LibVLC para Android
-    implementation("org.videolan.android:libvlc-all:3.5.1")
+    // LibVLC para Android - Cambiando a una versión diferente
+    implementation("org.videolan.android:libvlc-all:3.4.9")
 
     // DataStore para configuraciones
     implementation("androidx.datastore:datastore-preferences:1.0.0")

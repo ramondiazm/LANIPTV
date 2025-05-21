@@ -20,6 +20,7 @@ class PlaylistServiceConnection(
 
     private var playlistService: PlaylistService? = null
     private var isBound = false
+    private var currentChannel: Channel? = null
     private val TAG = "ServiceConnection"
 
     /**
@@ -65,7 +66,25 @@ class PlaylistServiceConnection(
      * Reproduce un canal
      */
     fun playChannel(channel: Channel) {
+        currentChannel = channel
         playlistService?.playChannel(channel)
+    }
+
+    /**
+     * Reintenta la reproducción del canal actual
+     */
+    fun retryCurrentChannel() {
+        currentChannel?.let { channel ->
+            Log.d(TAG, "Reintentando reproducción del canal actual: ${channel.name}")
+            playlistService?.playChannel(channel)
+        }
+    }
+
+    /**
+     * Obtiene el canal actual
+     */
+    fun getCurrentChannel(): Channel? {
+        return currentChannel
     }
 
     /**

@@ -10,6 +10,8 @@ import android.content.Intent
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.laniptv.MainActivity
 import com.example.laniptv.R
@@ -27,11 +29,14 @@ class PlaylistService : Service() {
     private var vlcPlayerManager: VlcPlayerManager? = null
     private var currentChannel: Channel? = null
     private var onPlayerStateChanged: ((PlayerState) -> Unit)? = null
+    private var wakeLock: PowerManager.WakeLock? = null
 
     // ID del canal de notificaciones
     private val CHANNEL_ID = "LanIPTVServiceChannel"
     // ID de la notificación
     private val NOTIFICATION_ID = 1
+
+    private val TAG = "PlaylistService"
 
     /**
      * Binder para la conexión con el servicio
@@ -45,12 +50,30 @@ class PlaylistService : Service() {
         // Crear el canal de notificaciones
         createNotificationChannel()
 
+        // Adquirir un wakelock parcial para mantener la CPU encendida durante la reproducción
+        try {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = powerManager.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "LanIPTV::PlaybackWakeLock"
+            )
+            wakeLock?.acquire(10 * 60 * 1000L) // 10 minutos
+        } catch (e: Exception) {
+            Log.e(TAG, "Error al adquirir wakelock: ${e.message}")
+        }
+
         // Inicializar el reproductor VLC
         vlcPlayerManager = VlcPlayerManager(this) { state ->
+            // Propagar estado al listener en la actividad
             onPlayerStateChanged?.invoke(state)
+
+            // Actualizar notificación según el estado
+            updateNotificationForPlayerState(state)
         }
 
         vlcPlayerManager?.initialize()
+
+        Log.d(TAG, "Servicio PlaylistService creado")
     }
 
     override fun onBind(intent: Intent?): IBinder {
@@ -106,6 +129,23 @@ class PlaylistService : Service() {
                 stopSelf()
             }
         }
+    }
+
+    /**
+     * Actualiza la notificación según el estado del reproductor
+     */
+    private fun updateNotificationForPlayerState(state: PlayerState) {
+        val message = when (state) {
+            is PlayerState.Playing -> "Reproduciendo: ${currentChannel?.name ?: "Canal"}"
+            is PlayerState.Paused -> "Pausado: ${currentChannel?.name ?: "Canal"}"
+            is PlayerState.Loading -> "Cargando: ${currentChannel?.name ?: "Canal"}"
+            is PlayerState.Error -> "Error: ${state.message}"
+            else -> "IPTV Player"
+        }
+
+        val notification = createNotification(message)
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        notificationManager.notify(NOTIFICATION_ID, notification)
     }
 
     /**
@@ -197,7 +237,19 @@ class PlaylistService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         // Liberar recursos
+        try {
+            wakeLock?.let {
+                if (it.isHeld) {
+                    it.release()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error al liberar wakelock: ${e.message}")
+        }
+
         vlcPlayerManager?.release()
         vlcPlayerManager = null
+
+        Log.d(TAG, "Servicio PlaylistService destruido")
     }
 }

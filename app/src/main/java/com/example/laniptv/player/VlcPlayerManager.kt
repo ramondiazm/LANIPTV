@@ -25,6 +25,10 @@ class VlcPlayerManager(
     private var currentLayout: VLCVideoLayout? = null
     private val TAG = "VlcPlayerManager"
 
+    // Contador de reintentos para manejo de errores
+    private var retryCount = 0
+    private val MAX_RETRIES = 3
+
     /**
      * Inicializa la librería VLC con configuración optimizada
      */
@@ -34,14 +38,20 @@ class VlcPlayerManager(
                 // Configuración mejorada para mayor estabilidad en reproducciones IPTV
                 val options = ArrayList<String>().apply {
                     // Opciones de buffering mejoradas
-                    add("--network-caching=3000")       // Incrementado para mejor estabilidad
+                    add("--network-caching=2000")
                     add("--file-caching=1500")
-                    add("--live-caching=2000")
+                    add("--live-caching=1800")
 
                     // Opciones críticas para streaming
                     add("--sout-mux-caching=2000")
                     add("--http-reconnect")
                     add("--adaptive-maxbuffer=30000")   // Búfer más grande para adaptación
+
+                    // Opciones para mejorar la calidad del video
+                    add("--codec=avcodec")
+                    add("--hw-dec=automatic")         // Decodificación por hardware automática
+                    add("--video-filter=deinterlace")  // Mejora video entrelazado
+                    add("--deinterlace-mode=blend")   // Modo de desentrelazado
 
                     // Opciones para mejorar la continuidad del stream
                     add("--clock-jitter=0")
@@ -62,6 +72,9 @@ class VlcPlayerManager(
                     add("--no-sub-autodetect-file")
                     add("--no-snapshot-preview")
                     add("--no-stats")
+
+                    // Verbose para debugging
+                    add("-vvv")
                 }
 
                 Log.d(TAG, "Inicializando LibVLC con opciones mejoradas")
@@ -84,20 +97,35 @@ class VlcPlayerManager(
      */
     fun attachViews(videoLayout: VLCVideoLayout) {
         try {
-            // Si hay un layout anterior y es diferente, desconectarlo primero
-            if (currentLayout != null && currentLayout != videoLayout) {
+            // Si hay un layout anterior, desconectarlo primero
+            if (currentLayout != null) {
                 mediaPlayer?.detachViews()
                 currentLayout = null
+                Log.d(TAG, "Vistas anteriores desacopladas")
             }
 
-            // Si no hay un layout actual o es diferente, adjuntar el nuevo
-            if (currentLayout == null) {
-                mediaPlayer?.attachViews(videoLayout, null, false, false)
-                currentLayout = videoLayout
-                Log.d(TAG, "Vistas adjuntadas al reproductor")
-            }
+            // Pequeño retraso para garantizar que el surface se actualice
+            Handler(Looper.getMainLooper()).postDelayed({
+                try {
+                    // Adjuntar nuevo layout - importante: el tercer parámetro es enableVideoFilter
+                    // que debe ser true para habilitar filtros de video
+                    mediaPlayer?.attachViews(videoLayout, null, true, false)
+                    currentLayout = videoLayout
+                    Log.d(TAG, "Vistas adjuntadas al reproductor")
 
-            onPlayerStateChanged(PlayerState.Idle)
+                    // Si hay un canal actual, reintentar la reproducción
+                    currentChannel?.let {
+                        if (mediaPlayer?.isPlaying == false) {
+                            Log.d(TAG, "Reintentando reproducción al adjuntar vistas")
+                            playChannel(it)
+                        }
+                    }
+
+                    onPlayerStateChanged(PlayerState.Idle)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error al adjuntar vistas (delayed): ${e.message}", e)
+                }
+            }, 200)  // 200ms de retraso
         } catch (e: Exception) {
             Log.e(TAG, "Error al adjuntar vistas: ${e.message}", e)
         }
@@ -125,8 +153,9 @@ class VlcPlayerManager(
         }
 
         currentChannel = channel
+        retryCount = 0  // Reiniciar contador de reintentos
         onPlayerStateChanged(PlayerState.Loading)
-        Log.d(TAG, "Iniciando reproducción de canal: ${channel.name}")
+        Log.d(TAG, "Iniciando reproducción de canal: ${channel.name} - URL: ${channel.streamUrl}")
 
         try {
             // Detener reproducción anterior
@@ -137,13 +166,24 @@ class VlcPlayerManager(
             val media = Media(libVlc, uri)
 
             // Configurar opciones según el tipo de stream
+            val isHls = channel.streamUrl.contains(".m3u8")
             val isUdp = channel.streamUrl.startsWith("udp") || channel.streamUrl.startsWith("rtp")
             val isHttp = channel.streamUrl.startsWith("http")
 
             // Opciones comunes
-            media.addOption(":network-caching=3000")
+            media.addOption(":network-caching=2000")
 
-            if (isUdp) {
+            // Habilitar decodificación por hardware
+            media.setHWDecoderEnabled(true, false)
+
+            // Configuración específica por tipo de stream
+            if (isHls) {
+                Log.d(TAG, "Aplicando configuración para HLS")
+                media.addOption(":adaptive-use-access")
+                media.addOption(":adaptive-maxwidth=1920")
+                media.addOption(":adaptive-maxheight=1080")
+                media.addOption(":adaptive-bw=2000") // Ancho de banda adaptativo
+            } else if (isUdp) {
                 // Optimizaciones para streams UDP/RTP
                 media.addOption(":udp-timeout=5000")
                 media.addOption(":udp-caching=3000")
@@ -164,6 +204,31 @@ class VlcPlayerManager(
         } catch (e: Exception) {
             Log.e(TAG, "Error al reproducir canal: ${e.message}", e)
             onPlayerStateChanged(PlayerState.Error("Error al reproducir: ${e.message}"))
+
+            // Reintentar automáticamente si hay errores
+            retryPlayback()
+        }
+    }
+
+    /**
+     * Reintenta la reproducción después de un error
+     */
+    private fun retryPlayback() {
+        val channel = currentChannel ?: return
+
+        if (retryCount < MAX_RETRIES) {
+            retryCount++
+            Log.d(TAG, "Reintento #$retryCount de reproducción para ${channel.name}")
+
+            // Aumentar el retraso con cada reintento
+            val delayMs = 1000L * retryCount
+
+            Handler(Looper.getMainLooper()).postDelayed({
+                playChannel(channel)
+            }, delayMs)
+        } else {
+            Log.e(TAG, "Número máximo de reintentos alcanzado para ${channel.name}")
+            onPlayerStateChanged(PlayerState.Error("No se pudo reproducir después de $MAX_RETRIES intentos"))
         }
     }
 
@@ -175,6 +240,7 @@ class VlcPlayerManager(
             when (event.type) {
                 MediaPlayer.Event.Playing -> {
                     Log.d(TAG, "Evento: Reproduciendo")
+                    retryCount = 0  // Reiniciar contador si la reproducción es exitosa
                     onPlayerStateChanged(PlayerState.Playing)
                 }
                 MediaPlayer.Event.Paused -> {
@@ -184,27 +250,15 @@ class VlcPlayerManager(
                 MediaPlayer.Event.EndReached -> {
                     Log.d(TAG, "Evento: Fin alcanzado")
                     // Implementación mejorada de reintento con delay
-                    currentChannel?.let {
-                        Log.d(TAG, "Reintentando reproducción con delay")
-                        // Pequeña pausa antes de reintentar para evitar bucle de reintentos rápidos
-                        Handler(Looper.getMainLooper()).postDelayed({
-                            playChannel(it)
-                        }, 1500) // 1.5 segundos de pausa
-                    }
+                    retryPlayback()
                 }
                 MediaPlayer.Event.EncounteredError -> {
                     Log.e(TAG, "Evento: Error en reproducción")
-                    // Implementación mejorada de manejo de errores
                     val errorMessage = "Error en la reproducción"
                     onPlayerStateChanged(PlayerState.Error(errorMessage))
 
-                    // Reintentar después de un error con delay progresivo
-                    currentChannel?.let { channel ->
-                        // Reintentar con un delay mayor
-                        Handler(Looper.getMainLooper()).postDelayed({
-                            playChannel(channel)
-                        }, 3000) // 3 segundos
-                    }
+                    // Reintentar con la estrategia de reintento
+                    retryPlayback()
                 }
                 MediaPlayer.Event.Buffering -> {
                     val buffering = event.buffering
@@ -218,6 +272,21 @@ class VlcPlayerManager(
                         // Informar al usuario sobre el estado del buffering
                         onPlayerStateChanged(PlayerState.Loading)
                     }
+                }
+                MediaPlayer.Event.Vout -> {
+                    val countVout = event.voutCount
+                    Log.d(TAG, "Evento: Vout - Conteo: $countVout")
+                    if (countVout > 0) {
+                        Log.d(TAG, "¡Video habilitado! Superficie de vídeo creada.")
+                    } else {
+                        Log.d(TAG, "Superficie de vídeo destruída.")
+                    }
+                }
+                MediaPlayer.Event.ESAdded -> {
+                    Log.d(TAG, "Evento: ES Añadido - Tipo: ${event.esChangedType}")
+                }
+                MediaPlayer.Event.MediaChanged -> {
+                    Log.d(TAG, "Evento: Media Cambiado")
                 }
                 MediaPlayer.Event.TimeChanged, MediaPlayer.Event.PositionChanged -> {
                     // Evento silencioso, no loggear para evitar spam

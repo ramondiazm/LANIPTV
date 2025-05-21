@@ -22,6 +22,7 @@ import org.videolan.libvlc.Media
 import org.videolan.libvlc.MediaPlayer
 import org.videolan.libvlc.util.VLCVideoLayout
 import android.util.Log
+import kotlinx.coroutines.delay
 
 @Composable
 fun VLCPlayer(
@@ -31,77 +32,128 @@ fun VLCPlayer(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    // Create LibVLC instance
+    // Configuración mejorada para LibVLC
     val libVlc = remember {
-        // Setup LibVLC options
+        // Configuración optimizada para streams
         val options = arrayListOf(
+            // Opciones críticas para streaming
             "--no-drop-late-frames",
             "--no-skip-frames",
             "--rtsp-tcp",
-            "--network-caching=1000",
-            "-vvv" // Verbose logging for debugging
+            "--http-reconnect",
+
+            // Configuración de caché para streams
+            "--network-caching=2000",
+            "--file-caching=1500",
+            "--live-caching=1800",
+
+            // Opciones de decodificación de video
+            "--codec=avcodec",
+            "--hw-dec=automatic", // Habilita decodificación por hardware
+            "--video-filter=deinterlace",
+            "--deinterlace-mode=blend",
+
+            // Opciones de audio
+            "--aout=opensles",
+            "--audio-time-stretch",
+
+            // Opciones para mejorar la resiliencia
+            "--clock-jitter=0",
+            "--clock-synchro=0",
+
+            // Logging para debug
+            "-vvv"
         )
 
         LibVLC(context, options)
     }
 
-    // Create MediaPlayer
+    // Crear MediaPlayer
     val mediaPlayer = remember { MediaPlayer(libVlc) }
 
-    // Reference to VLCVideoLayout
+    // Referencia a VLCVideoLayout
     val videoLayout = remember { VLCVideoLayoutRef() }
 
-    // Set up media playback
+    // Configurar reproducción del stream
     LaunchedEffect(streamUrl) {
         try {
+            Log.d("VLCPlayer", "Iniciando reproducción de: $streamUrl")
+
+            // Pequeño retraso para asegurarse que el layout está listo
+            delay(300)
+
             val media = Media(libVlc, Uri.parse(streamUrl))
+
+            // Configuración específica para streams HLS/HTTP
             media.setHWDecoderEnabled(true, false)
 
+            if (streamUrl.contains(".m3u8")) {
+                Log.d("VLCPlayer", "Aplicando configuración para HLS")
+                media.addOption(":adaptive-use-access")
+                media.addOption(":adaptive-maxwidth=1920")
+                media.addOption(":adaptive-maxheight=1080")
+                media.addOption(":adaptive-bw=2000") // Ancho de banda adaptativo
+            }
+
+            // Opciones adicionales para mejorar la reproducción
+            media.addOption(":network-caching=2000")
+            media.addOption(":clock-jitter=0")
+            media.addOption(":clock-synchro=0")
+
+            // Configurar y reproducir
             mediaPlayer.media = media
             mediaPlayer.play()
-
             media.release()
+
+            // Monitorear estado inicial
+            delay(500)
+            if (!mediaPlayer.isPlaying) {
+                Log.d("VLCPlayer", "Reproducción no iniciada, reintentando...")
+                mediaPlayer.stop()
+                mediaPlayer.play()
+            }
         } catch (e: Exception) {
-            Log.e("VLCPlayer", "Error starting playback", e)
+            Log.e("VLCPlayer", "Error iniciando reproducción: ${e.message}", e)
         }
     }
 
-    // Handle lifecycle events to properly release resources
+    // Manejar eventos del ciclo de vida
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_RESUME -> {
                     try {
-                        // Solo adjuntar vistas si no están ya adjuntas
+                        Log.d("VLCPlayer", "Lifecycle: ON_RESUME")
                         videoLayout.get()?.let {
-                            if (!mediaPlayer.hasMedia() || !mediaPlayer.isPlaying()) {
-                                mediaPlayer.attachViews(it, null, false, false)
-                                if (mediaPlayer.media == null) {
-                                    val media = Media(libVlc, Uri.parse(streamUrl))
-                                    mediaPlayer.media = media
-                                    media.release()
-                                }
+                            mediaPlayer.attachViews(it, null, true, false)
+
+                            if (mediaPlayer.media == null || !mediaPlayer.isPlaying) {
+                                Log.d("VLCPlayer", "Reiniciando reproducción en ON_RESUME")
+                                val media = Media(libVlc, Uri.parse(streamUrl))
+                                mediaPlayer.media = media
                                 mediaPlayer.play()
+                                media.release()
                             }
                         }
                     } catch (e: Exception) {
-                        Log.e("VLCPlayer", "Error resuming playback", e)
+                        Log.e("VLCPlayer", "Error en ON_RESUME: ${e.message}", e)
                     }
                 }
                 Lifecycle.Event.ON_PAUSE -> {
                     try {
-                        mediaPlayer.stop()
-                        mediaPlayer.detachViews()
+                        Log.d("VLCPlayer", "Lifecycle: ON_PAUSE")
+                        mediaPlayer.pause()
                     } catch (e: Exception) {
-                        Log.e("VLCPlayer", "Error pausing playback", e)
+                        Log.e("VLCPlayer", "Error en ON_PAUSE: ${e.message}", e)
                     }
                 }
                 Lifecycle.Event.ON_DESTROY -> {
                     try {
+                        Log.d("VLCPlayer", "Lifecycle: ON_DESTROY")
                         mediaPlayer.stop()
                         mediaPlayer.detachViews()
                     } catch (e: Exception) {
-                        Log.e("VLCPlayer", "Error destroying playback", e)
+                        Log.e("VLCPlayer", "Error en ON_DESTROY: ${e.message}", e)
                     }
                 }
                 else -> {}
@@ -113,23 +165,25 @@ fun VLCPlayer(
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
             try {
+                Log.d("VLCPlayer", "Liberando recursos")
                 mediaPlayer.stop()
                 mediaPlayer.detachViews()
                 mediaPlayer.release()
                 libVlc.release()
             } catch (e: Exception) {
-                Log.e("VLCPlayer", "Error disposing resources", e)
+                Log.e("VLCPlayer", "Error liberando recursos: ${e.message}", e)
             }
         }
     }
 
+    // Vista de Android
     Box(modifier = modifier) {
         AndroidView(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black),
             factory = { ctx ->
-                // Create a VLCVideoLayout
+                // Crear VLCVideoLayout
                 VLCVideoLayout(ctx).apply {
                     layoutParams = FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
@@ -137,17 +191,21 @@ fun VLCPlayer(
                     )
                     videoLayout.set(this)
 
-                    // Attach the MediaPlayer to the view
-                    // No adjuntar vistas aquí - lo haremos en el ciclo de vida ON_RESUME
+                    // Configuración importante: intenta adjuntar vistas inmediatamente
+                    try {
+                        mediaPlayer.attachViews(this, null, true, false)
+                        Log.d("VLCPlayer", "Vistas adjuntadas en factory")
+                    } catch (e: Exception) {
+                        Log.e("VLCPlayer", "Error adjuntando vistas en factory: ${e.message}", e)
+                    }
                 }
-            },
-            update = { /* No hacer nada en la actualización */ }
+            }
         )
     }
 }
 
 /**
- * Helper class to keep a reference to VLCVideoLayout
+ * Clase auxiliar para mantener referencia a VLCVideoLayout
  */
 class VLCVideoLayoutRef {
     private var layout: VLCVideoLayout? = null
