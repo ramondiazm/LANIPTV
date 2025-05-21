@@ -91,14 +91,13 @@ fun MainScreen(
     val coroutineScope = rememberCoroutineScope()
 
     Box(modifier = Modifier.fillMaxSize()) {
-        when (playlistState) {
+        when (val currentPlaylistState = playlistState) {
             is PlaylistUiState.Loading -> {
                 LoadingScreenView()
             }
 
             is PlaylistUiState.Error -> {
-                val errorMessage = (playlistState as PlaylistUiState.Error).message
-                ErrorScreen(errorMessage = errorMessage) {
+                ErrorScreen(errorMessage = currentPlaylistState.message) {
                     // Botón para reintentar cargar la lista
                     coroutineScope.launch {
                         viewModel.loadPlaylist("https://opop.pro/XLE8sWYgsUXvNp")
@@ -107,7 +106,7 @@ fun MainScreen(
             }
 
             is PlaylistUiState.Success -> {
-                val playlist = (playlistState as PlaylistUiState.Success).playlist
+                val playlist = currentPlaylistState.playlist
 
                 if (isFullscreen) {
                     // Pantalla completa con el canal seleccionado
@@ -213,7 +212,7 @@ fun MainScreen(
                                 }
 
                                 // Mostrar estado de reproducción
-                                when (playerState) {
+                                when (val currentPlayerState = playerState) {
                                     is PlayerState.Loading -> {
                                         Box(
                                             modifier = Modifier.fillMaxSize(),
@@ -235,7 +234,6 @@ fun MainScreen(
                                         }
                                     }
                                     is PlayerState.Error -> {
-                                        val errorMessage = (playerState as PlayerState.Error).message
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxSize()
@@ -243,7 +241,7 @@ fun MainScreen(
                                             contentAlignment = Alignment.Center
                                         ) {
                                             Text(
-                                                text = "Error: $errorMessage\nToca para reintentar...",
+                                                text = "Error: ${currentPlayerState.message}\nToca para reintentar...",
                                                 color = Color.White,
                                                 textAlign = TextAlign.Center,
                                                 modifier = Modifier
@@ -386,7 +384,7 @@ fun FullscreenPlayerView(
         )
 
         // Mostrar estado de carga/error
-        when (playerState) {
+        when (val currentPlayerState = playerState) {
             is PlayerState.Loading -> {
                 Box(
                     modifier = Modifier.fillMaxSize(),
@@ -415,7 +413,7 @@ fun FullscreenPlayerView(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "Error: ${playerState.message}\nToca para reintentar...",
+                        text = "Error: ${currentPlayerState.message}\nToca para reintentar...",
                         color = Color.White,
                         textAlign = TextAlign.Center,
                         modifier = Modifier

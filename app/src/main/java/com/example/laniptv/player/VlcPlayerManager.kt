@@ -71,20 +71,23 @@ class VlcPlayerManager(
             val options = ArrayList<String>()
 
             if (isEmulator) {
+                Log.d(TAG, "Configurando VLC para emulador")
                 // Configuración minimalista para emulador
                 options.apply {
                     add("--no-video-title-show")
                     add("--no-stats")
                     add("--no-snapshot-preview")
-                    add("--no-hw-dec") // Deshabilitar decodificación hardware en emulador
                     add("--aout=android_audiotrack")
                     add("--vout=android_display")
                     add("--network-caching=10000") // Caché grande para emulador
                     add("--file-caching=10000")
                     add("--live-caching=10000")
-                    add("-vv") // Verbose logs
+                    add("--intf=dummy") // Interface dummy para emulador
+                    add("--extraintf=")
+                    add("-v") // Verbose logs pero no tanto como -vv
                 }
             } else {
+                Log.d(TAG, "Configurando VLC para dispositivo real")
                 // Configuración optimizada para dispositivos reales
                 options.apply {
                     add("--network-caching=5000")
@@ -210,6 +213,7 @@ class VlcPlayerManager(
             // Para emuladores, usar una URL de prueba que funcione bien
             val streamUrl = if (isEmulator) {
                 // URL de test que funciona bien en emuladores
+                Log.d(TAG, "Usando URL de prueba para emulador")
                 "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
             } else {
                 channel.streamUrl
@@ -237,21 +241,21 @@ class VlcPlayerManager(
                     // Configuración específica para HLS
                     media.addOption(":http-reconnect")
                     media.addOption(":hls-timeout=60")
-                    if (isEmulator) {
-                        media.addOption(":no-hw-dec")
-                    }
+                    Log.d(TAG, "Configurando para stream HLS")
                 }
                 isUdp -> {
                     // Optimizaciones para streams UDP/RTP
                     media.addOption(":udp-timeout=5000")
                     media.addOption(":udp-caching=5000")
                     media.addOption(":clock-jitter=0")
+                    Log.d(TAG, "Configurando para stream UDP/RTP")
                 }
                 isHttp -> {
                     // Optimizaciones para streams HTTP
                     media.addOption(":http-reconnect")
                     media.addOption(":http-continuous")
                     media.addOption(":adaptive-maxbuffer=30000")
+                    Log.d(TAG, "Configurando para stream HTTP")
                 }
             }
 
@@ -351,7 +355,7 @@ class VlcPlayerManager(
 
                     // Mostrar más detalles sobre el buffer
                     if (isEmulator && buffering == 0.0f) {
-                        Log.d(TAG, "Buffering estancado en 0% en emulador - Esto es normal")
+                        Log.d(TAG, "Buffering estancado en 0% en emulador - Usando stream de prueba")
                     }
                 }
                 MediaPlayer.Event.TimeChanged, MediaPlayer.Event.PositionChanged -> {
@@ -426,10 +430,11 @@ class VlcPlayerManager(
         val mpInfo = mediaPlayer?.let {
             "Estado: ${if (it.isPlaying) "Reproduciendo" else "Pausa/Detenido"}\n" +
                     "Tiempo: ${it.time / 1000} segundos\n" +
-                    "Emulador: $isEmulator\n"
+                    "Emulador: $isEmulator\n" +
+                    "Canal actual: ${currentChannel?.name ?: "Ninguno"}\n"
         } ?: "MediaPlayer nulo"
 
-        return "VLC Info:\n$mpInfo"
+        return "=== VLC DIAGNÓSTICO ===\n$mpInfo"
     }
 
     /**
