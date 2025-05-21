@@ -1,7 +1,5 @@
 package com.example.laniptv.ui.screens
 
-import android.view.ViewGroup
-import android.widget.FrameLayout
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -16,6 +14,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -29,6 +28,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -38,7 +38,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -56,31 +55,23 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
-import com.example.laniptv.R
 import com.example.laniptv.data.model.Channel
 import com.example.laniptv.data.model.EpgState
 import com.example.laniptv.data.model.PlayerState
 import com.example.laniptv.data.model.PlaylistUiState
 import com.example.laniptv.ui.components.CategoryList
 import com.example.laniptv.ui.components.ChannelCard
-import com.example.laniptv.ui.components.ErrorScreen
 import com.example.laniptv.ui.components.LoadingScreenView
 import com.example.laniptv.ui.components.SearchBar
+import com.example.laniptv.ui.components.VlcPlayerComponent
 import com.example.laniptv.ui.viewmodel.EpgViewModel
 import com.example.laniptv.ui.viewmodel.MainViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import org.videolan.libvlc.util.VLCVideoLayout
 import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
-import android.util.Log
-import androidx.compose.foundation.layout.fillMaxHeight
-
-private const val TAG = "MainScreen"
 
 @Composable
 fun MainScreen(
@@ -95,19 +86,9 @@ fun MainScreen(
     val selectedChannel by viewModel.selectedChannel.collectAsState()
     val playerState by viewModel.playerState.collectAsState()
     val isFullscreen by viewModel.isFullscreen.collectAsState()
+    val diagnosisInfo by viewModel.diagnosisInfo.collectAsState()
 
     val coroutineScope = rememberCoroutineScope()
-
-    // Estado para reintentar la conexión del VideoLayout
-    var retryVideoConnection by remember { mutableStateOf(false) }
-
-    // Efecto para reintentar la conexión automáticamente cada cierto tiempo
-    LaunchedEffect(retryVideoConnection, selectedChannel) {
-        if (selectedChannel != null) {
-            delay(500) // Esperar un momento para que la UI se actualice
-            retryVideoConnection = !retryVideoConnection
-        }
-    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         when (playlistState) {
@@ -133,8 +114,7 @@ fun MainScreen(
                     FullscreenPlayerView(
                         viewModel = viewModel,
                         selectedChannel = selectedChannel,
-                        epgViewModel = epgViewModel,
-                        retryVideoConnection = retryVideoConnection
+                        epgViewModel = epgViewModel
                     )
                 } else {
                     // Vista normal con categorías y lista de canales
@@ -206,11 +186,10 @@ fun MainScreen(
                                         )
                                     }
                             ) {
-                                // Componente de reproductor VLC
+                                // Componente de reproductor VLC usando el nuevo componente
                                 VlcPlayerComponent(
                                     viewModel = viewModel,
-                                    modifier = Modifier.fillMaxSize(),
-                                    retryVideoConnection = retryVideoConnection
+                                    modifier = Modifier.fillMaxSize()
                                 )
 
                                 // Información básica del canal actual (siempre visible)
@@ -240,9 +219,19 @@ fun MainScreen(
                                             modifier = Modifier.fillMaxSize(),
                                             contentAlignment = Alignment.Center
                                         ) {
-                                            CircularProgressIndicator(
-                                                color = Color.White
-                                            )
+                                            Column(
+                                                horizontalAlignment = Alignment.CenterHorizontally
+                                            ) {
+                                                CircularProgressIndicator(
+                                                    color = Color.White
+                                                )
+                                                Spacer(modifier = Modifier.height(16.dp))
+                                                Text(
+                                                    text = "Cargando...",
+                                                    color = Color.White,
+                                                    style = MaterialTheme.typography.bodyLarge
+                                                )
+                                            }
                                         }
                                     }
                                     is PlayerState.Error -> {
@@ -254,7 +243,7 @@ fun MainScreen(
                                             contentAlignment = Alignment.Center
                                         ) {
                                             Text(
-                                                text = "Error: $errorMessage\nTocando para reintentar...",
+                                                text = "Error: $errorMessage\nToca para reintentar...",
                                                 color = Color.White,
                                                 textAlign = TextAlign.Center,
                                                 modifier = Modifier
@@ -339,52 +328,36 @@ fun MainScreen(
                 }
             }
         }
-    }
-}
 
-/**
- * Componente separado para VLC que evita la duplicación de código
- */
-@Composable
-fun VlcPlayerComponent(
-    viewModel: MainViewModel,
-    modifier: Modifier = Modifier,
-    retryVideoConnection: Boolean = false
-) {
-    Log.d(TAG, "VlcPlayerComponent: Recreando con retryVideoConnection=$retryVideoConnection")
-
-    AndroidView(
-        modifier = modifier,
-        factory = { ctx ->
-            Log.d(TAG, "VlcPlayerComponent: Creando VLCVideoLayout")
-            VLCVideoLayout(ctx).apply {
-                layoutParams = FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT
-                )
-                // Configuramos ID para facilitar el debug
-                id = R.id.vlc_video_layout
-
-                // Intentamos adjuntar la vista inmediatamente
-                viewModel.attachVideoView(this)
-            }
-        },
-        update = { videoLayout ->
-            // Adjuntar vistas cuando el valor de retryVideoConnection cambie
-            // Esto forzará la reconexión de la vista cuando sea necesario
-            Log.d(TAG, "VlcPlayerComponent: Actualizando VLCVideoLayout")
-            viewModel.attachVideoView(videoLayout)
+        // Diálogo de diagnóstico
+        diagnosisInfo?.let { info ->
+            AlertDialog(
+                onDismissRequest = { viewModel.clearDiagnosis() },
+                title = { Text("Información de diagnóstico") },
+                text = {
+                    Text(
+                        text = info,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                },
+                confirmButton = {
+                    Button(onClick = { viewModel.clearDiagnosis() }) {
+                        Text("Cerrar")
+                    }
+                }
+            )
         }
-    )
+    }
 }
 
 @Composable
 fun FullscreenPlayerView(
     viewModel: MainViewModel,
     selectedChannel: Channel?,
-    epgViewModel: EpgViewModel,
-    retryVideoConnection: Boolean = false
+    epgViewModel: EpgViewModel
 ) {
+    val playerState by viewModel.playerState.collectAsState()
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -397,11 +370,10 @@ fun FullscreenPlayerView(
                 )
             }
     ) {
-        // Componente de reproductor VLC
+        // Componente de reproductor VLC usando el nuevo componente
         VlcPlayerComponent(
             viewModel = viewModel,
-            modifier = Modifier.fillMaxSize(),
-            retryVideoConnection = retryVideoConnection
+            modifier = Modifier.fillMaxSize()
         )
 
         // Barra flotante con controles e información del canal
@@ -414,15 +386,25 @@ fun FullscreenPlayerView(
         )
 
         // Mostrar estado de carga/error
-        when (val state = viewModel.playerState.collectAsState().value) {
+        when (playerState) {
             is PlayerState.Loading -> {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    CircularProgressIndicator(
-                        color = Color.White
-                    )
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        CircularProgressIndicator(
+                            color = Color.White
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "Cargando...",
+                            color = Color.White,
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                    }
                 }
             }
             is PlayerState.Error -> {
@@ -433,7 +415,7 @@ fun FullscreenPlayerView(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "Error: ${state.message}\nTocando para reintentar...",
+                        text = "Error: ${playerState.message}\nToca para reintentar...",
                         color = Color.White,
                         textAlign = TextAlign.Center,
                         modifier = Modifier
@@ -693,6 +675,32 @@ fun ChannelControlBar(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun ErrorScreen(errorMessage: String, onRetry: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text(
+            text = "Error al cargar la lista",
+            style = MaterialTheme.typography.headlineMedium,
+            color = MaterialTheme.colorScheme.error
+        )
+        Text(
+            text = errorMessage,
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.padding(vertical = 16.dp),
+            textAlign = TextAlign.Center
+        )
+        Button(onClick = onRetry) {
+            Text("Reintentar")
         }
     }
 }

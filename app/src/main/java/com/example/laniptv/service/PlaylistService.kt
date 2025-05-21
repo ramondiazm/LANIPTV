@@ -10,7 +10,6 @@ import android.content.Intent
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
-import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.laniptv.MainActivity
@@ -29,14 +28,12 @@ class PlaylistService : Service() {
     private var vlcPlayerManager: VlcPlayerManager? = null
     private var currentChannel: Channel? = null
     private var onPlayerStateChanged: ((PlayerState) -> Unit)? = null
-    private var wakeLock: PowerManager.WakeLock? = null
+    private val TAG = "PlaylistService"
 
     // ID del canal de notificaciones
     private val CHANNEL_ID = "LanIPTVServiceChannel"
     // ID de la notificación
     private val NOTIFICATION_ID = 1
-
-    private val TAG = "PlaylistService"
 
     /**
      * Binder para la conexión con el servicio
@@ -47,33 +44,21 @@ class PlaylistService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        Log.d(TAG, "Servicio PlaylistService creado")
+
         // Crear el canal de notificaciones
         createNotificationChannel()
 
-        // Adquirir un wakelock parcial para mantener la CPU encendida durante la reproducción
         try {
-            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-            wakeLock = powerManager.newWakeLock(
-                PowerManager.PARTIAL_WAKE_LOCK,
-                "LanIPTV::PlaybackWakeLock"
-            )
-            wakeLock?.acquire(10 * 60 * 1000L) // 10 minutos
+            // Inicializar el reproductor VLC
+            vlcPlayerManager = VlcPlayerManager(this) { state ->
+                onPlayerStateChanged?.invoke(state)
+            }
+
+            vlcPlayerManager?.initialize()
         } catch (e: Exception) {
-            Log.e(TAG, "Error al adquirir wakelock: ${e.message}")
+            Log.e(TAG, "Error al crear VlcPlayerManager: ${e.message}", e)
         }
-
-        // Inicializar el reproductor VLC
-        vlcPlayerManager = VlcPlayerManager(this) { state ->
-            // Propagar estado al listener en la actividad
-            onPlayerStateChanged?.invoke(state)
-
-            // Actualizar notificación según el estado
-            updateNotificationForPlayerState(state)
-        }
-
-        vlcPlayerManager?.initialize()
-
-        Log.d(TAG, "Servicio PlaylistService creado")
     }
 
     override fun onBind(intent: Intent?): IBinder {
@@ -132,23 +117,6 @@ class PlaylistService : Service() {
     }
 
     /**
-     * Actualiza la notificación según el estado del reproductor
-     */
-    private fun updateNotificationForPlayerState(state: PlayerState) {
-        val message = when (state) {
-            is PlayerState.Playing -> "Reproduciendo: ${currentChannel?.name ?: "Canal"}"
-            is PlayerState.Paused -> "Pausado: ${currentChannel?.name ?: "Canal"}"
-            is PlayerState.Loading -> "Cargando: ${currentChannel?.name ?: "Canal"}"
-            is PlayerState.Error -> "Error: ${state.message}"
-            else -> "IPTV Player"
-        }
-
-        val notification = createNotification(message)
-        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        notificationManager.notify(NOTIFICATION_ID, notification)
-    }
-
-    /**
      * Crea el canal de notificaciones (requerido para Android O y superior)
      */
     private fun createNotificationChannel() {
@@ -195,22 +163,38 @@ class PlaylistService : Service() {
      * Reproduce un canal
      */
     fun playChannel(channel: Channel) {
-        currentChannel = channel
-        vlcPlayerManager?.playChannel(channel)
+        try {
+            currentChannel = channel
+            vlcPlayerManager?.playChannel(channel)
+            Log.d(TAG, "Reproduciendo canal: ${channel.name}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error al reproducir canal: ${e.message}", e)
+            onPlayerStateChanged?.invoke(PlayerState.Error("Error al reproducir: ${e.message}"))
+        }
     }
 
     /**
      * Asocia la vista de video para la reproducción
      */
     fun attachViews(videoLayout: VLCVideoLayout) {
-        vlcPlayerManager?.attachViews(videoLayout)
+        try {
+            vlcPlayerManager?.attachViews(videoLayout)
+            Log.d(TAG, "Vistas adjuntadas al reproductor")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error al adjuntar vistas: ${e.message}", e)
+        }
     }
 
     /**
      * Desasocia la vista de video
      */
     fun detachViews() {
-        vlcPlayerManager?.detachViews()
+        try {
+            vlcPlayerManager?.detachViews()
+            Log.d(TAG, "Vistas desacopladas del reproductor")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error al desacoplar vistas: ${e.message}", e)
+        }
     }
 
     /**
@@ -218,38 +202,81 @@ class PlaylistService : Service() {
      */
     fun setOnPlayerStateChangedListener(listener: (PlayerState) -> Unit) {
         onPlayerStateChanged = listener
+        Log.d(TAG, "Listener de estado del reproductor configurado")
     }
 
     /**
      * Pausa la reproducción
      */
     fun pause() {
-        vlcPlayerManager?.pause()
+        try {
+            vlcPlayerManager?.pause()
+            Log.d(TAG, "Reproducción pausada")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error al pausar: ${e.message}", e)
+        }
     }
 
     /**
      * Reanuda la reproducción
      */
     fun resume() {
-        vlcPlayerManager?.resume()
+        try {
+            vlcPlayerManager?.resume()
+            Log.d(TAG, "Reproducción reanudada")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error al reanudar: ${e.message}", e)
+        }
+    }
+
+    /**
+     * Obtiene información del reproductor para diagnóstico
+     */
+    fun getMediaPlayerInfo(): String {
+        return try {
+            val vlcInfo = vlcPlayerManager?.getMediaPlayerInfo() ?: "Reproductor VLC no disponible"
+            val currentChannelInfo = currentChannel?.let {
+                "Canal actual: ${it.name}\nURL: ${it.streamUrl}\n"
+            } ?: "Sin canal seleccionado\n"
+
+            "=== DIAGNÓSTICO DEL SERVICIO ===\n" +
+                    "$currentChannelInfo" +
+                    "$vlcInfo\n" +
+                    "Servicio enlazado: Sí\n" +
+                    "Servicio en primer plano: Sí"
+        } catch (e: Exception) {
+            Log.e(TAG, "Error al obtener información de diagnóstico: ${e.message}", e)
+            "Error al obtener información: ${e.message}"
+        }
+    }
+
+    /**
+     * Obtiene el canal actual
+     */
+    fun getCurrentChannel(): Channel? {
+        return currentChannel
+    }
+
+    /**
+     * Verifica si el reproductor está reproduciéndose
+     */
+    fun isPlaying(): Boolean {
+        // Esta función podría implementarse en VlcPlayerManager si es necesaria
+        return false
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        // Liberar recursos
+        Log.d(TAG, "Destruyendo PlaylistService")
+
         try {
-            wakeLock?.let {
-                if (it.isHeld) {
-                    it.release()
-                }
-            }
+            // Liberar recursos
+            vlcPlayerManager?.release()
+            vlcPlayerManager = null
+            currentChannel = null
+            onPlayerStateChanged = null
         } catch (e: Exception) {
-            Log.e(TAG, "Error al liberar wakelock: ${e.message}")
+            Log.e(TAG, "Error al liberar recursos en onDestroy: ${e.message}", e)
         }
-
-        vlcPlayerManager?.release()
-        vlcPlayerManager = null
-
-        Log.d(TAG, "Servicio PlaylistService destruido")
     }
 }

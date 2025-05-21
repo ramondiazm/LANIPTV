@@ -107,4 +107,12 @@ class PlaylistServiceConnection(
     fun resume() {
         playlistService?.resume()
     }
+// Añadir esta función al archivo existente PlaylistServiceConnection.kt
+
+    /**
+     * Obtiene información del reproductor para diagnóstico
+     */
+    fun getMediaPlayerInfo(): String {
+        return playlistService?.getMediaPlayerInfo() ?: "Servicio no disponible"
+    }
 }

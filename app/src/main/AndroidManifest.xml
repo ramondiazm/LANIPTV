@@ -14,7 +14,7 @@
 
     <!-- Permiso específico para categoría de servicio (obligatorio en Android 13+) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
-
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Configuración para Android TV -->
     <uses-feature
         android:name="android.software.leanback"
